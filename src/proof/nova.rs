@@ -221,7 +221,7 @@ impl<'a> Proof<'a> {
 
                 for (i, x) in zi.iter().enumerate() {
                     let allocated =
-                        AllocatedNum::alloc(cs.namespace(|| format!("z{}_1", i)), || Ok(*x))
+                        AllocatedNum::alloc(cs.namespace(|| format!("z{}_1", i)), || Ok(x.clone()))
                             .map_err(Error::Synthesis)?;
                     zi_allocated.push(allocated);
                 }
