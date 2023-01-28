@@ -73,11 +73,71 @@ pub fn add<F: PrimeField, CS: ConstraintSystem<F>>(
     Ok(res)
 }
 
+pub fn add_to_lc<F: PrimeField, CS: ConstraintSystem<F>>(
+    b: &Boolean,
+    lc: LinearCombination<F>,
+    scalar: F,
+) -> Result<LinearCombination<F>, SynthesisError> {
+    let mut v_lc = lc;
+    match b {
+        Boolean::Constant(c) => {
+            if *c {
+                v_lc = v_lc + (scalar, CS::one())
+            } else {
+                v_lc = v_lc + (F::zero(), CS::one())
+            }
+        }
+        Boolean::Is(ref v) => v_lc = v_lc + (scalar, v.get_variable()),
+        Boolean::Not(ref v) => v_lc = v_lc + (scalar, CS::one()) - (scalar, v.get_variable()),
+    };
+
+    Ok(v_lc)
+}
+
+pub fn vector_or<CS: ConstraintSystem<F>, F: LurkField>(
+    cs: &mut CS,
+    a: &Vec<Boolean>,
+) -> Result<Boolean, SynthesisError> {
+    let total = popcount(cs, a).unwrap();
+    let result = alloc_is_zero(cs, &total)?.not();
+    Ok(result)
+}
+
+/// Adds a constraint to CS, enforcing that the addition of the allocated numbers in vector `v`
+/// is equal to zero.
+#[allow(dead_code)]
+pub fn popcount<F: LurkField, CS: ConstraintSystem<F>>(
+    cs: &mut CS,
+    v: &Vec<Boolean>,
+) -> Result<AllocatedNum<F>, SynthesisError> {
+    let mut v_lc = LinearCombination::<F>::zero();
+    let mut result_num = 0;
+    for b in v {
+        v_lc = add_to_lc::<F, CS>(b, v_lc, F::one())?;
+        if b.get_value().unwrap_or(false) {
+            result_num += 1;
+        }
+    }
+
+    let alloc_result_num = AllocatedNum::alloc(&mut cs.namespace(|| "alloc result num"), || {
+        Ok(F::from_u64(result_num).unwrap())
+    })?;
+    // (summation(v)) * 1 = sum
+    cs.enforce(
+        || "popcount",
+        |_| v_lc,
+        |lc| lc + CS::one(),
+        |lc| lc + alloc_result_num.get_variable(),
+    );
+
+    Ok(alloc_result_num)
+}
+
 /// Adds a constraint to CS, enforcing that the addition of the allocated numbers in vector `v`
 /// is equal to `sum`.
 ///
 /// summation(v) = sum
-pub fn popcount<F: PrimeField, CS: ConstraintSystem<F>>(
+pub fn enforce_popcount<F: PrimeField, CS: ConstraintSystem<F>>(
     cs: &mut CS,
     v: &Vec<Boolean>,
     sum: &AllocatedNum<F>,
@@ -539,5 +599,30 @@ mod tests {
             assert_eq!(res.get_value().expect("get_value failed"), tmp);
             assert!(cs.is_satisfied());
         }
+    }
+
+    #[test]
+    fn test_vector_or() {
+        let mut cs = TestConstraintSystem::<Fr>::new();
+
+        let mut v = vec![
+            Boolean::Constant(false),
+            Boolean::Constant(false),
+            Boolean::Constant(false),
+            Boolean::Constant(false),
+        ];
+
+        let res = vector_or(&mut cs.namespace(|| format!("vector or false")), &v).unwrap();
+
+        assert!(!res.get_value().unwrap());
+        assert!(cs.is_satisfied());
+
+        v[0] = Boolean::Constant(true);
+        v[2] = Boolean::Constant(true);
+
+        let res = vector_or(&mut cs.namespace(|| format!("vector or true")), &v).unwrap();
+
+        assert!(res.get_value().unwrap());
+        assert!(cs.is_satisfied());
     }
 }

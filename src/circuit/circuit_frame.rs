@@ -18,10 +18,10 @@ use crate::{
 };
 
 use super::gadgets::constraints::{
-    self, alloc_equal, alloc_is_zero, enforce_implication, or, pick, sub,
+    self, alloc_equal, alloc_is_zero, enforce_implication, or, pick, sub, vector_or,
 };
 use crate::circuit::circuit_frame::constraints::{
-    add, allocate_is_negative, boolean_to_num, enforce_true, mul, popcount,
+    add, allocate_is_negative, boolean_to_num, enforce_popcount, enforce_true, mul,
 };
 use crate::circuit::gadgets::hashes::{AllocatedConsWitness, AllocatedContWitness};
 use crate::circuit::ToInputs;
@@ -1137,14 +1137,14 @@ fn reduce_sym<F: LurkField, CS: ConstraintSystem<F>>(
     // The way it should be.
 
     // expr
-    let output_expr_should_be_expr = or!(
-        cs,
-        &needed_env_missing,
-        &sym_is_self_evaluating,
-        &needed_binding_missing,
-        &with_sym_binding_unmatched,
-        &with_cons_binding_unmatched
-    )?;
+    let v = vec![
+        needed_env_missing.clone(),
+        sym_is_self_evaluating.clone(),
+        needed_binding_missing.clone(),
+        with_sym_binding_unmatched.clone(),
+        with_cons_binding_unmatched.clone(),
+    ];
+    let output_expr_should_be_expr = vector_or(cs, &v)?;
 
     let output_expr_should_be_val = with_sym_binding_matched.clone();
     let output_expr_should_be_val_to_use = with_cons_binding_matched.clone();
@@ -4648,7 +4648,7 @@ pub fn enforce_at_most_n_bits<F: LurkField, CS: ConstraintSystem<F>>(
 ) -> Result<(), SynthesisError> {
     let num_bits = num.to_bits_le(&mut cs.namespace(|| "u64 remainder bit decomp"))?;
     let v = num_bits[n..255].to_vec();
-    popcount(&mut cs.namespace(|| "add all MSBs"), &v, &g.false_num);
+    enforce_popcount(&mut cs.namespace(|| "add all MSBs"), &v, &g.false_num);
     Ok(())
 }
 
@@ -5123,7 +5123,7 @@ mod tests {
             //println!("{}", print_cs(&cs));
             assert_eq!(12513, cs.num_constraints());
             assert_eq!(13, cs.num_inputs());
-            assert_eq!(12140, cs.aux().len());
+            assert_eq!(12139, cs.aux().len());
 
             let public_inputs = multiframe.public_inputs();
             let mut rng = rand::thread_rng();
@@ -5721,7 +5721,7 @@ mod tests {
             )
             .unwrap();
 
-            popcount(
+            enforce_popcount(
                 &mut cs.namespace(|| format!("popcount {x}")),
                 &bits,
                 alloc_popcount.hash(),
