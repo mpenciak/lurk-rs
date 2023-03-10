@@ -6,12 +6,13 @@ use bellperson::{util_cs::test_cs::TestConstraintSystem, Circuit, SynthesisError
 use crate::circuit::MultiFrame;
 use crate::eval::{Witness, IO};
 use crate::field::LurkField;
+use crate::store::Store;
 
-pub(crate) type SequentialCS<'a, F, IO, Witness> =
-    Vec<(MultiFrame<'a, F, IO, Witness>, TestConstraintSystem<F>)>;
+pub(crate) type SequentialCS<F, IO, Witness> =
+    Vec<(MultiFrame<F, IO, Witness>, TestConstraintSystem<F>)>;
 
 pub trait Provable<F: LurkField> {
-    fn public_inputs(&self) -> Vec<F>;
+    fn public_inputs(&self, store: &Store<F>) -> Vec<F>;
     fn public_input_size() -> usize;
     fn chunk_frame_count(&self) -> usize;
 }
@@ -45,7 +46,7 @@ pub fn verify_sequential_css<F: LurkField + Copy>(
 }
 pub trait PublicParameters {}
 
-pub trait Prover<'a, F: LurkField> {
+pub trait Prover<F: LurkField> {
     type PublicParams: PublicParameters;
 
     fn new(chunk_frame_count: usize) -> Self;
@@ -79,8 +80,8 @@ pub trait Prover<'a, F: LurkField> {
 
     fn outer_synthesize(
         &self,
-        multiframes: &'a [MultiFrame<F, IO<F>, Witness<F>>],
-    ) -> Result<SequentialCS<'a, F, IO<F>, Witness<F>>, SynthesisError> {
+        multiframes: &[MultiFrame<F, IO<F>, Witness<F>>],
+    ) -> Result<SequentialCS<F, IO<F>, Witness<F>>, SynthesisError> {
         let res = multiframes
             .iter()
             .enumerate()

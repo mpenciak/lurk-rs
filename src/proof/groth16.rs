@@ -100,17 +100,17 @@ impl Groth16Prover<Bls12> {
         // so that multiple runs will create the same 'random' parameters.
         // If you use these parameters in production, anyone can make fake proofs.
         let rng = &mut XorShiftRng::from_seed(DUMMY_RNG_SEED);
-        let params = groth16::generate_random_parameters::<Bls12, _, _>(multiframe, rng)?;
+        let params = Self::generate_random_parameters(multiframe, rng)?;
         Ok(PublicParams(params))
     }
 
     pub fn prove<R: RngCore>(
         &self,
-        multi_frame: MultiFrame<'_, Scalar, IO<Scalar>, Witness<Scalar>>,
+        multi_frame: MultiFrame<Scalar, IO<Scalar>, Witness<Scalar>>,
         params: &groth16::Parameters<Bls12>,
         mut rng: R,
     ) -> Result<groth16::Proof<Bls12>, SynthesisError> {
-        groth16::create_random_proof(multi_frame, params, &mut rng)
+        Self::create_random_proof(multi_frame, params, &mut rng)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -128,7 +128,7 @@ impl Groth16Prover<Bls12> {
         let frames = Evaluator::generate_frames(expr, env, store, limit, padding_predicate)?;
         store.hydrate_scalar_cache();
 
-        let multiframes = MultiFrame::from_frames(self.chunk_frame_count(), &frames, store);
+        let multiframes = MultiFrame::from_frames(self.chunk_frame_count(), &frames);
         let mut proofs = Vec::with_capacity(multiframes.len());
         let mut statements = Vec::with_capacity(multiframes.len());
 
@@ -141,7 +141,7 @@ impl Groth16Prover<Bls12> {
 
         let last_multiframe = multiframes.last().unwrap().clone();
         for multiframe in multiframes.into_iter() {
-            statements.push(multiframe.public_inputs());
+            statements.push(multiframe.public_inputs(store));
             let proof = self.prove(multiframe.clone(), params, &mut rng).unwrap();
 
             proofs.push(proof.clone());
@@ -152,14 +152,13 @@ impl Groth16Prover<Bls12> {
             let dummy_multiframe = MultiFrame::make_dummy(
                 self.chunk_frame_count(),
                 last_multiframe.frames.and_then(|x| x.last().copied()),
-                store,
             );
 
             let dummy_proof = self
                 .prove(dummy_multiframe.clone(), params, &mut rng)
                 .unwrap();
 
-            let dummy_statement = dummy_multiframe.public_inputs();
+            let dummy_statement = dummy_multiframe.public_inputs(store);
             while proofs.len().count_ones() != 1 || proofs.len() < 2 {
                 // Pad proofs and frames to a power of 2.
                 proofs.push(dummy_proof.clone());
@@ -194,11 +193,12 @@ impl Groth16Prover<Bls12> {
 
     pub fn verify_groth16_proof(
         // multiframe need not have inner frames populated for verification purposes.
-        multiframe: MultiFrame<'_, Scalar, IO<Scalar>, Witness<Scalar>>,
+        multiframe: MultiFrame<Scalar, IO<Scalar>, Witness<Scalar>>,
         pvk: &groth16::PreparedVerifyingKey<Bls12>,
         proof: groth16::Proof<Bls12>,
+        store: &Store<Scalar>,
     ) -> Result<bool, SynthesisError> {
-        let inputs = multiframe.public_inputs();
+        let inputs = multiframe.public_inputs(store);
 
         verify_proof(pvk, &proof, &inputs)
     }
@@ -222,6 +222,28 @@ impl Groth16Prover<Bls12> {
             AggregateVersion::V2,
         )
     }
+    pub fn generate_random_parameters<E, R>(
+        multi_frame: MultiFrame<Scalar, IO<Scalar>, Witness<Scalar>>,
+        rng: &mut R,
+    ) -> Result<groth16::Parameters<E>, SynthesisError>
+    where
+        E: Engine + MultiMillerLoop,
+        R: RngCore,
+    {
+        todo!()
+    }
+
+    pub fn create_random_proof<E, R>(
+        multi_frame: MultiFrame<Scalar, IO<Scalar>, Witness<Scalar>>,
+        params: &groth16::Parameters<Bls12>,
+        rng: &mut R,
+    ) -> Result<groth16::Proof<E>, SynthesisError>
+    where
+        E: Engine + MultiMillerLoop,
+        R: RngCore,
+    {
+        todo!()
+    }
 }
 
 pub struct Groth16Prover<E: Engine + MultiMillerLoop> {
@@ -233,7 +255,7 @@ pub struct PublicParams<E: Engine + MultiMillerLoop>(pub groth16::Parameters<E>)
 
 impl PublicParameters for PublicParams<Bls12> {}
 
-impl Prover<'_, Scalar> for Groth16Prover<Bls12> {
+impl Prover<Scalar> for Groth16Prover<Bls12> {
     type PublicParams = PublicParams<Bls12>;
 
     fn new(chunk_frame_count: usize) -> Self {
@@ -248,15 +270,14 @@ impl Prover<'_, Scalar> for Groth16Prover<Bls12> {
     }
 }
 
-impl
-    MultiFrame<'_, <Bls12 as Engine>::Fr, IO<<Bls12 as Engine>::Fr>, Witness<<Bls12 as Engine>::Fr>>
-{
+impl MultiFrame<<Bls12 as Engine>::Fr, IO<<Bls12 as Engine>::Fr>, Witness<<Bls12 as Engine>::Fr>> {
     pub fn verify_groth16_proof(
         self,
         pvk: &groth16::PreparedVerifyingKey<Bls12>,
         proof: groth16::Proof<Bls12>,
+        store: &Store<Scalar>,
     ) -> Result<bool, SynthesisError> {
-        let inputs: Vec<Scalar> = self.public_inputs();
+        let inputs: Vec<Scalar> = self.public_inputs(store);
         verify_proof(pvk, &proof, inputs.as_slice())
     }
 }
@@ -264,10 +285,11 @@ impl
 #[allow(dead_code)]
 fn verify_sequential_groth16_proofs(
     multiframe_proofs: Vec<(
-        MultiFrame<'_, Scalar, IO<Scalar>, Witness<Scalar>>,
+        MultiFrame<Scalar, IO<Scalar>, Witness<Scalar>>,
         groth16::Proof<Bls12>,
     )>,
     vk: &groth16::VerifyingKey<Bls12>,
+    store: &Store<Scalar>,
 ) -> Result<bool, SynthesisError> {
     let pvk = groth16::prepare_verifying_key(vk);
 
@@ -282,7 +304,7 @@ fn verify_sequential_groth16_proofs(
 
         if !multiframe
             .clone()
-            .verify_groth16_proof(&pvk, proof.clone())?
+            .verify_groth16_proof(&pvk, proof.clone(), store)?
         {
             return Ok(false);
         }
@@ -309,7 +331,7 @@ mod tests {
     const DEFAULT_CHECK_GROTH16: bool = false;
     const DEFAULT_CHUNK_FRAME_COUNT: usize = 5;
 
-    fn outer_prove_aux<Fo: Fn(&'_ mut Store<Fr>) -> Ptr<Fr>>(
+    fn outer_prove_aux<Fo: Fn(&mut Store<Fr>) -> Ptr<Fr>>(
         source: &str,
         expected_result: Fo,
         expected_iterations: usize,

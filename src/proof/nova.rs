@@ -39,27 +39,27 @@ pub type EE2 = nova::provider::ipa_pc::EvaluationEngine<G2>;
 pub type SS1 = nova::spartan::RelaxedR1CSSNARK<G1, EE1>;
 pub type SS2 = nova::spartan::RelaxedR1CSSNARK<G2, EE2>;
 
-pub type C1<'a> = MultiFrame<'a, S1, IO<S1>, Witness<S1>>;
+pub type C1 = MultiFrame<S1, IO<S1>, Witness<S1>>;
 pub type C2 = TrivialTestCircuit<<G2 as Group>::Scalar>;
 
-pub type PublicParams<'a> = nova::PublicParams<G1, G2, C1<'a>, C2>;
+pub type PublicParams = nova::PublicParams<G1, G2, C1, C2>;
 
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
-pub enum Proof<'a> {
-    Recursive(Box<RecursiveSNARK<G1, G2, C1<'a>, C2>>),
-    Compressed(Box<CompressedSNARK<G1, G2, C1<'a>, C2, SS1, SS2>>),
+pub enum Proof {
+    Recursive(Box<RecursiveSNARK<G1, G2, C1, C2>>),
+    Compressed(Box<CompressedSNARK<G1, G2, C1, C2, SS1, SS2>>),
 }
 
-pub fn public_params<'a>(num_iters_per_step: usize) -> PublicParams<'a> {
+pub fn public_params(num_iters_per_step: usize) -> PublicParams {
     let (circuit_primary, circuit_secondary) = C1::circuits(num_iters_per_step);
 
     PublicParams::setup(circuit_primary, circuit_secondary)
 }
 
-impl<'a> MultiFrame<'a, S1, IO<S1>, Witness<S1>> {
-    fn circuits(count: usize) -> (C1<'a>, C2) {
+impl MultiFrame<S1, IO<S1>, Witness<S1>> {
+    fn circuits(count: usize) -> (C1, C2) {
         (MultiFrame::blank(count), TrivialTestCircuit::default())
     }
 }
@@ -69,10 +69,10 @@ pub struct NovaProver<F: LurkField> {
     _p: PhantomData<F>,
 }
 
-impl<'a> PublicParameters for PublicParams<'a> {}
+impl PublicParameters for PublicParams {}
 
-impl<'a, F: LurkField> Prover<'a, F> for NovaProver<F> {
-    type PublicParams = PublicParams<'a>;
+impl<F: LurkField> Prover<F> for NovaProver<F> {
+    type PublicParams = PublicParams;
     fn new(chunk_frame_count: usize) -> Self {
         NovaProver::<F> {
             chunk_frame_count,
@@ -99,18 +99,18 @@ impl<F: LurkField> NovaProver<F> {
 
         Ok(frames)
     }
-    pub fn evaluate_and_prove<'a>(
-        &'a self,
-        pp: &'a PublicParams,
+    pub fn evaluate_and_prove(
+        &self,
+        pp: &PublicParams,
         expr: Ptr<S1>,
         env: Ptr<S1>,
-        store: &'a mut Store<S1>,
+        store: &mut Store<S1>,
         limit: usize,
     ) -> Result<(Proof, Vec<S1>, Vec<S1>, usize), ProofError> {
         let frames = self.get_evaluation_frames(expr, env, store, limit)?;
         let z0 = frames[0].input.to_vector(store)?;
         let zi = frames.last().unwrap().output.to_vector(store)?;
-        let circuits = MultiFrame::from_frames(self.chunk_frame_count(), &frames, store);
+        let circuits = MultiFrame::from_frames(self.chunk_frame_count(), &frames);
         let num_steps = circuits.len();
         let proof =
             Proof::prove_recursively(pp, store, &circuits, self.chunk_frame_count, z0.clone())?;
@@ -119,7 +119,7 @@ impl<F: LurkField> NovaProver<F> {
     }
 }
 
-impl<'a, F: LurkField> StepCircuit<F> for MultiFrame<'a, F, IO<F>, Witness<F>> {
+impl<F: LurkField> StepCircuit<F> for CircuitState<F, IO<F>, Witness<F>> {
     fn arity(&self) -> usize {
         6
     }
@@ -142,7 +142,7 @@ impl<'a, F: LurkField> StepCircuit<F> for MultiFrame<'a, F, IO<F>, Witness<F>> {
 
         let (new_expr, new_env, new_cont) = match self.frames.as_ref() {
             Some(frames) => {
-                let s = self.store.expect("store missing");
+                let s = &self.store.expect("store missing");
                 let g = GlobalAllocations::new(&mut cs.namespace(|| "global_allocations"), s)?;
                 self.synthesize_frames(cs, s, input_expr, input_env, input_cont, frames, &g)
             }
@@ -178,11 +178,11 @@ impl<'a, F: LurkField> StepCircuit<F> for MultiFrame<'a, F, IO<F>, Witness<F>> {
     }
 }
 
-impl<'a> Proof<'a> {
+impl Proof {
     pub fn prove_recursively(
-        pp: &'a PublicParams,
-        store: &'a Store<S1>,
-        circuits: &[C1<'a>],
+        pp: &PublicParams,
+        store: &Store<S1>,
+        circuits: &[C1],
         num_iters_per_step: usize,
         z0: Vec<S1>,
     ) -> Result<Self, ProofError> {
@@ -196,10 +196,10 @@ impl<'a> Proof<'a> {
             circuits[0].frames.as_ref().unwrap().len(),
             num_iters_per_step
         );
-        let (_circuit_primary, circuit_secondary) = C1::<'a>::circuits(num_iters_per_step);
+        let (_circuit_primary, circuit_secondary) = C1::circuits(num_iters_per_step);
 
         // produce a recursive SNARK
-        let mut recursive_snark: Option<RecursiveSNARK<G1, G2, C1<'a>, C2>> = None;
+        let mut recursive_snark: Option<RecursiveSNARK<G1, G2, C1, C2>> = None;
 
         for circuit_primary in circuits.iter() {
             assert_eq!(
@@ -243,7 +243,7 @@ impl<'a> Proof<'a> {
         Ok(Self::Recursive(Box::new(recursive_snark.unwrap())))
     }
 
-    pub fn compress(self, pp: &'a PublicParams) -> Result<Self, ProofError> {
+    pub fn compress(self, pp: &PublicParams) -> Result<Self, ProofError> {
         match &self {
             Self::Recursive(recursive_snark) => Ok(Self::Compressed(Box::new(CompressedSNARK::<
                 _,

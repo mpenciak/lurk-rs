@@ -1,4 +1,5 @@
 use std::fmt::Debug;
+use std::marker::PhantomData;
 
 use bellperson::{
     gadgets::{boolean::Boolean, num::AllocatedNum},
@@ -35,47 +36,50 @@ use num_bigint::BigUint;
 use num_integer::Integer;
 use num_traits::FromPrimitive;
 
+//pub struct CircuitState<F: LurkField, T: Copy, W> {
+//    store: Store<F>,
+//    multi_frame: MultiFrame<F, T, W>,
+//}
+
 #[derive(Clone, Copy, Debug)]
-pub struct CircuitFrame<'a, F: LurkField, T, W> {
-    pub store: Option<&'a Store<F>>,
+pub struct CircuitFrame<F: LurkField, T, W> {
     pub input: Option<T>,
     pub output: Option<T>,
     pub witness: Option<W>,
+    _f: PhantomData<F>,
 }
 
 #[derive(Clone)]
-pub struct MultiFrame<'a, F: LurkField, T: Copy, W> {
-    pub store: Option<&'a Store<F>>,
+pub struct MultiFrame<F: LurkField, T: Copy, W> {
     pub input: Option<T>,
     pub output: Option<T>,
-    pub frames: Option<Vec<CircuitFrame<'a, F, T, W>>>,
+    pub frames: Option<Vec<CircuitFrame<F, T, W>>>,
     pub count: usize,
 }
 
-impl<'a, F: LurkField, T: Clone + Copy, W: Copy> CircuitFrame<'a, F, T, W> {
+impl<F: LurkField, T: Clone + Copy, W: Copy> CircuitFrame<F, T, W> {
     pub fn blank() -> Self {
         Self {
-            store: None,
             input: None,
             output: None,
             witness: None,
+            _f: PhantomData,
         }
     }
 
-    pub fn from_frame(frame: &Frame<T, W>, store: &'a Store<F>) -> Self {
-        CircuitFrame {
-            store: Some(store),
+    pub fn from_frame(frame: &Frame<T, W>) -> Self {
+        Self {
             input: Some(frame.input),
             output: Some(frame.output),
             witness: Some(frame.witness),
+            _f: PhantomData,
         }
     }
 }
 
-impl<'a, F: LurkField, T: Clone + Copy + std::cmp::PartialEq, W: Copy> MultiFrame<'a, F, T, W> {
+impl<F: LurkField, T: Clone + Copy + std::cmp::PartialEq, W: Copy> MultiFrame<F, T, W> {
     pub fn blank(count: usize) -> Self {
         Self {
-            store: None,
             input: None,
             output: None,
             frames: None,
@@ -83,15 +87,11 @@ impl<'a, F: LurkField, T: Clone + Copy + std::cmp::PartialEq, W: Copy> MultiFram
         }
     }
 
-    pub fn get_store(&self) -> &Store<F> {
-        self.store.expect("store missing")
-    }
-
     pub fn frame_count(&self) -> usize {
         self.count
     }
 
-    pub fn from_frames(count: usize, frames: &[Frame<T, W>], store: &'a Store<F>) -> Vec<Self> {
+    pub fn from_frames(count: usize, frames: &[Frame<T, W>]) -> Vec<Self> {
         // `count` is the number of `Frames` to include per `MultiFrame`.
         let total_frames = frames.len();
         let n = total_frames / count + (total_frames % count != 0) as usize;
@@ -101,7 +101,7 @@ impl<'a, F: LurkField, T: Clone + Copy + std::cmp::PartialEq, W: Copy> MultiFram
             let mut inner_frames = Vec::with_capacity(count);
 
             for x in chunk {
-                let circuit_frame = CircuitFrame::from_frame(x, store);
+                let circuit_frame = CircuitFrame::from_frame(x);
                 inner_frames.push(circuit_frame);
             }
 
@@ -117,7 +117,6 @@ impl<'a, F: LurkField, T: Clone + Copy + std::cmp::PartialEq, W: Copy> MultiFram
             debug_assert!(!inner_frames.is_empty());
 
             let mf = MultiFrame {
-                store: Some(store),
                 input: Some(chunk[0].input),
                 output: Some(output),
                 frames: Some(inner_frames),
@@ -131,11 +130,7 @@ impl<'a, F: LurkField, T: Clone + Copy + std::cmp::PartialEq, W: Copy> MultiFram
     }
 
     /// Make a dummy `MultiFrame`, duplicating `self`'s final `CircuitFrame`.
-    pub(crate) fn make_dummy(
-        count: usize,
-        circuit_frame: Option<CircuitFrame<'a, F, T, W>>,
-        store: &'a Store<F>,
-    ) -> Self {
+    pub(crate) fn make_dummy(count: usize, circuit_frame: Option<CircuitFrame<F, T, W>>) -> Self {
         let (frames, input, output) = if let Some(circuit_frame) = circuit_frame {
             (
                 Some(vec![circuit_frame; count]),
@@ -146,7 +141,6 @@ impl<'a, F: LurkField, T: Clone + Copy + std::cmp::PartialEq, W: Copy> MultiFram
             (None, None, None)
         };
         Self {
-            store: Some(store),
             input,
             output,
             frames,
@@ -201,36 +195,41 @@ impl<'a, F: LurkField, T: Clone + Copy + std::cmp::PartialEq, W: Copy> MultiFram
                         "cont mismatch"
                     );
                 };
-                (i + 1, frame.synthesize(cs, i, allocated_io, g).unwrap())
+                (
+                    i + 1,
+                    frame
+                        .synthesize(cs, i, allocated_io, g, Some(store))
+                        .unwrap(),
+                )
             });
 
         (new_expr, new_env, new_cont)
     }
 }
 
-impl<F: LurkField, T: PartialEq + Debug, W> CircuitFrame<'_, F, T, W> {
+impl<F: LurkField, T: PartialEq + Debug, W> CircuitFrame<F, T, W> {
     pub fn precedes(&self, maybe_next: &Self) -> bool {
         self.output == maybe_next.input
     }
 }
 
-impl<F: LurkField, T: PartialEq + Debug + Copy, W> MultiFrame<'_, F, T, W> {
+impl<F: LurkField, T: PartialEq + Debug + Copy, W> MultiFrame<F, T, W> {
     pub fn precedes(&self, maybe_next: &Self) -> bool {
         self.output == maybe_next.input
     }
 }
 
-impl<F: LurkField, W: Copy> Provable<F> for MultiFrame<'_, F, IO<F>, W> {
-    fn public_inputs(&self) -> Vec<F> {
+impl<F: LurkField, W: Copy> Provable<F> for MultiFrame<F, IO<F>, W> {
+    fn public_inputs(&self, store: &Store<F>) -> Vec<F> {
         let mut inputs: Vec<_> = Vec::with_capacity(Self::public_input_size());
 
         if let Some(input) = &self.input {
-            inputs.extend(input.to_inputs(self.get_store()));
+            inputs.extend(input.to_inputs(store));
         } else {
             panic!("public inputs for blank circuit");
         }
         if let Some(output) = &self.output {
-            inputs.extend(output.to_inputs(self.get_store()));
+            inputs.extend(output.to_inputs(store));
         } else {
             panic!("public outputs for blank circuit");
         }
@@ -250,13 +249,14 @@ impl<F: LurkField, W: Copy> Provable<F> for MultiFrame<'_, F, IO<F>, W> {
 
 type AllocatedIO<F> = (AllocatedPtr<F>, AllocatedPtr<F>, AllocatedContPtr<F>);
 
-impl<F: LurkField> CircuitFrame<'_, F, IO<F>, Witness<F>> {
+impl<F: LurkField> CircuitFrame<F, IO<F>, Witness<F>> {
     pub(crate) fn synthesize<CS: ConstraintSystem<F>>(
         &self,
         cs: &mut CS,
         i: usize,
         inputs: AllocatedIO<F>,
         g: &GlobalAllocations<F>,
+        store: Option<&Store<F>>,
     ) -> Result<AllocatedIO<F>, SynthesisError> {
         let (input_expr, input_env, input_cont) = inputs;
 
@@ -295,8 +295,8 @@ impl<F: LurkField> CircuitFrame<'_, F, IO<F>, Witness<F>> {
             )
         };
 
-        if let Some(store) = self.store {
-            reduce(store)
+        if let Some(s) = store {
+            reduce(s)
         } else {
             let mut store: Store<F> = Default::default();
             store.hydrate_scalar_cache();
@@ -305,8 +305,12 @@ impl<F: LurkField> CircuitFrame<'_, F, IO<F>, Witness<F>> {
     }
 }
 
-impl<F: LurkField> Circuit<F> for MultiFrame<'_, F, IO<F>, Witness<F>> {
-    fn synthesize<CS: ConstraintSystem<F>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
+impl<F: LurkField> LurkCircuit<F> for MultiFrame<F, IO<F>, Witness<F>> {
+    fn synthesize<CS: ConstraintSystem<F>>(
+        self,
+        cs: &mut CS,
+        store: Option<&Store<F>>,
+    ) -> Result<(), SynthesisError> {
         ////////////////////////////////////////////////////////////////////////////////
         // Bind public inputs.
         //
@@ -386,7 +390,7 @@ impl<F: LurkField> Circuit<F> for MultiFrame<'_, F, IO<F>, Witness<F>> {
             Ok(())
         };
 
-        match self.store {
+        match store {
             Some(s) => {
                 let frames = self.frames.clone().unwrap();
                 synth(s, &frames, self.input, self.output)
@@ -5188,7 +5192,7 @@ mod tests {
                 MultiFrame::<<Bls12 as Engine>::Fr, _, _>::blank(DEFAULT_CHUNK_FRAME_COUNT);
 
             blank_multiframe
-                .synthesize(&mut cs_blank)
+                .synthesize(&mut cs_blank, Some(store))
                 .expect("failed to synthesize");
 
             let multiframes = MultiFrame::from_frames(
@@ -5206,7 +5210,7 @@ mod tests {
 
             multiframe
                 .clone()
-                .synthesize(&mut cs)
+                .synthesize(&mut cs, Some(store))
                 .expect("failed to synthesize");
 
             let delta = cs.delta(&cs_blank, false);
@@ -5315,7 +5319,7 @@ mod tests {
                 store,
             )[0]
             .clone()
-            .synthesize(&mut cs)
+            .synthesize(&mut cs, Some(store))
             .expect("failed to synthesize");
 
             if expect_success {
@@ -5393,7 +5397,7 @@ mod tests {
                 store,
             )[0]
             .clone()
-            .synthesize(&mut cs)
+            .synthesize(&mut cs, Some(store))
             .expect("failed to synthesize");
 
             if expect_success {
@@ -5472,7 +5476,7 @@ mod tests {
                 store,
             )[0]
             .clone()
-            .synthesize(&mut cs)
+            .synthesize(&mut cs, Some(store))
             .expect("failed to synthesize");
 
             if expect_success {
@@ -5552,7 +5556,7 @@ mod tests {
                 store,
             )[0]
             .clone()
-            .synthesize(&mut cs)
+            .synthesize(&mut cs, Some(store))
             .expect("failed to synthesize");
 
             if expect_success {
