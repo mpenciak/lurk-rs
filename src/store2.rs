@@ -1,3 +1,4 @@
+use itertools::Itertools;
 use lurk::field::LurkField;
 use std::collections::BTreeMap;
 
@@ -16,6 +17,7 @@ pub enum ExprTag {
     Comm,
     Fun,
     Cons,
+    Name,
     Sym,
     Key,
     Thunk,
@@ -98,7 +100,7 @@ pub struct ContPtr<F: LurkField> {
 pub enum ExprPtrImg<F: LurkField> {
     Cons(ExprPtr<F>, ExprPtr<F>),
     StrCons(ExprPtr<F>, ExprPtr<F>),
-    SymCons(ExprPtr<F>, ExprPtr<F>),
+    NameCons(ExprPtr<F>, ExprPtr<F>),
     Fun(ExprPtr<F>, ExprPtr<F>, ExprPtr<F>),
     Thunk(ExprPtr<F>, ContPtr<F>),
 }
@@ -161,6 +163,39 @@ impl<F: LurkField + std::cmp::Ord> Store<F> {
             self.put_expr(ptr.clone(), img);
             chars_rev.push(c);
             self.vec_char_cache.insert(chars_rev.clone(), ptr.clone());
+        }
+        ptr
+    }
+
+    pub fn put_strs(&mut self, strs: Vec<String>) -> ExprPtr<F> {
+        let mut ptr: ExprPtr<F>;
+        let mut strs_rev = strs.clone();
+        strs_rev.reverse();
+        let mut heads_acc: Vec<String> = vec![];
+        loop {
+            if strs_rev.is_empty() {
+                ptr = ExprPtr { tag: ExprTag::Name, val: F::zero() };
+                break;
+            }
+            heads_acc.push(strs_rev.pop().unwrap());
+            match self.vec_str_cache.get(&strs_rev) {
+                Some(ptr_cache) => {
+                    ptr = ptr_cache.clone();
+                    break;
+                },
+                None => continue,
+            }
+        }
+        while let Some(s) = heads_acc.pop() {
+            let name_ptr = self.put_chars(s.chars().collect_vec());
+            let name_ptr_ = name_ptr.clone();
+            let preimage = [name_ptr_.tag.to_field(), name_ptr_.val, ptr.tag.to_field(), ptr.val];
+            let hash = hash4(&preimage);
+            ptr = ExprPtr { tag: ExprTag::Name, val: hash };
+            let img = ExprPtrImg::NameCons(name_ptr, ptr.clone());
+            self.put_expr(ptr.clone(), img);
+            strs_rev.push(s);
+            self.vec_str_cache.insert(strs_rev.clone(), ptr.clone());
         }
         ptr
     }
