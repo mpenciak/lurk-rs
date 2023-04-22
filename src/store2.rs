@@ -1,3 +1,4 @@
+use anyhow::anyhow;
 use itertools::Itertools;
 use lurk::field::LurkField;
 use std::collections::HashMap;
@@ -138,6 +139,43 @@ pub struct Store<F: LurkField> {
 
     name_cache: HashMap<Name, ExprPtr<F>>,
     name_cache_inv: HashMap<ExprPtr<F>, Name>,
+
+    nil_ptr: ExprPtr<F>,
+    t_ptr: ExprPtr<F>,
+    lambda_ptr: ExprPtr<F>,
+    quote_ptr: ExprPtr<F>,
+    let_ptr: ExprPtr<F>,
+    letrec_ptr: ExprPtr<F>,
+    cons_ptr: ExprPtr<F>,
+    strcons_ptr: ExprPtr<F>,
+    begin_ptr: ExprPtr<F>,
+    car_ptr: ExprPtr<F>,
+    cdr_ptr: ExprPtr<F>,
+    atom_ptr: ExprPtr<F>,
+    emit_ptr: ExprPtr<F>,
+    sum_ptr: ExprPtr<F>,
+    diff_ptr: ExprPtr<F>,
+    product_ptr: ExprPtr<F>,
+    quotient_ptr: ExprPtr<F>,
+    modulo_ptr: ExprPtr<F>,
+    num_equal_ptr: ExprPtr<F>,
+    equal_ptr: ExprPtr<F>,
+    less_ptr: ExprPtr<F>,
+    less_equal_ptr: ExprPtr<F>,
+    greater_ptr: ExprPtr<F>,
+    greater_equal_ptr: ExprPtr<F>,
+    current_env_ptr: ExprPtr<F>,
+    if_ptr: ExprPtr<F>,
+    hide_ptr: ExprPtr<F>,
+    commit_ptr: ExprPtr<F>,
+    num_ptr: ExprPtr<F>,
+    u64_ptr: ExprPtr<F>,
+    comm_ptr: ExprPtr<F>,
+    char_ptr: ExprPtr<F>,
+    eval_ptr: ExprPtr<F>,
+    open_ptr: ExprPtr<F>,
+    secret_ptr: ExprPtr<F>,
+    dummy_ptr: ExprPtr<F>,
 }
 
 impl<F: LurkField + core::hash::Hash> Store<F> {
@@ -245,6 +283,29 @@ impl<F: LurkField + core::hash::Hash> Store<F> {
         }
     }
 
+    pub fn get_str(&mut self, str_ptr: ExprPtr<F>) -> anyhow::Result<String, &str> {
+        let mut acc_str: String = Default::default();
+        let mut ptr = str_ptr;
+        loop {
+            match self.str_cache_inv.get(&ptr) {
+                Some(str) => {
+                    acc_str.push_str(str.as_str());
+                    break;
+                }
+                None => match self.exprs.get(&ptr) {
+                    Some(ExprPtrImg::StrCons(char_ptr, tail_ptr)) => {
+                        acc_str.push(char_ptr.val.to_char().unwrap());
+                        self.str_cache.insert(acc_str.clone(), ptr.clone());
+                        self.str_cache_inv.insert(ptr.clone(), acc_str.clone());
+                        ptr = tail_ptr.clone();
+                    }
+                    _ => return Err("Error when fetching string"),
+                },
+            }
+        }
+        Ok(acc_str)
+    }
+
     pub fn put_name(&mut self, name: Name) -> ExprPtr<F> {
         match self.name_cache.get(&name) {
             Some(ptr) => ptr.clone(),
@@ -255,6 +316,30 @@ impl<F: LurkField + core::hash::Hash> Store<F> {
                 ptr
             }
         }
+    }
+
+    pub fn get_name(&mut self, name_ptr: ExprPtr<F>) -> anyhow::Result<Name, &str> {
+        let mut acc_name: Name = Default::default();
+        let mut ptr = name_ptr;
+        loop {
+            match self.name_cache_inv.get(&ptr) {
+                Some(name) => {
+                    // acc_name.extend(name);
+                    break;
+                }
+                None => match self.exprs.get(&ptr) {
+                    Some(ExprPtrImg::NameCons(str_ptr, tail_ptr)) => {
+                        // let str: String = self.get_str(str_ptr)?;
+                        // acc_name.push(str);
+                        self.name_cache.insert(acc_name.clone(), ptr.clone());
+                        self.name_cache_inv.insert(ptr.clone(), acc_name.clone());
+                        ptr = tail_ptr.clone();
+                    }
+                    _ => return Err("Error when fetching string"),
+                },
+            }
+        }
+        Ok(acc_name)
     }
 
     pub fn put_sym(&mut self, sym_name: Name) -> ExprPtr<F> {
@@ -374,5 +459,57 @@ impl<F: LurkField + core::hash::Hash> Store<F> {
         self.conts
             .insert(ptr.clone(), ContPtrImg::Cont3(e1_, e2_, e3_, cont_));
         ptr
+    }
+
+    #[inline]
+    pub fn put_lurk_sym(&mut self, lurk_sym: &str) -> ExprPtr<F> {
+        self.put_sym(vec![lurk_sym.to_string(), "lurk".to_string()])
+    }
+
+    pub fn put_reserved_syms(&mut self) {
+        self.nil_ptr = self.put_lurk_sym("nil");
+        self.t_ptr = self.put_lurk_sym("t");
+        self.lambda_ptr = self.put_lurk_sym("lambda");
+        self.quote_ptr = self.put_lurk_sym("quote");
+        self.let_ptr = self.put_lurk_sym("let");
+        self.letrec_ptr = self.put_lurk_sym("letrec");
+        self.cons_ptr = self.put_lurk_sym("cons");
+        self.strcons_ptr = self.put_lurk_sym("strcons");
+        self.begin_ptr = self.put_lurk_sym("begin");
+        self.car_ptr = self.put_lurk_sym("car");
+        self.cdr_ptr = self.put_lurk_sym("cdr");
+        self.atom_ptr = self.put_lurk_sym("atom");
+        self.emit_ptr = self.put_lurk_sym("emit");
+        self.sum_ptr = self.put_lurk_sym("+");
+        self.diff_ptr = self.put_lurk_sym("-");
+        self.product_ptr = self.put_lurk_sym("*");
+        self.quotient_ptr = self.put_lurk_sym("/");
+        self.modulo_ptr = self.put_lurk_sym("%");
+        self.num_equal_ptr = self.put_lurk_sym("=");
+        self.equal_ptr = self.put_lurk_sym("eq");
+        self.less_ptr = self.put_lurk_sym("<");
+        self.less_equal_ptr = self.put_lurk_sym("<=");
+        self.greater_ptr = self.put_lurk_sym(">");
+        self.greater_equal_ptr = self.put_lurk_sym(">=");
+        self.current_env_ptr = self.put_lurk_sym("current-env");
+        self.if_ptr = self.put_lurk_sym("if");
+        self.hide_ptr = self.put_lurk_sym("hide");
+        self.commit_ptr = self.put_lurk_sym("commit");
+        self.num_ptr = self.put_lurk_sym("num");
+        self.u64_ptr = self.put_lurk_sym("u64");
+        self.comm_ptr = self.put_lurk_sym("comm");
+        self.char_ptr = self.put_lurk_sym("char");
+        self.eval_ptr = self.put_lurk_sym("eval");
+        self.open_ptr = self.put_lurk_sym("open");
+        self.secret_ptr = self.put_lurk_sym("secret");
+        self.dummy_ptr = self.put_lurk_sym("dummy");
+    }
+
+    pub fn is_nil(self, ptr: ExprPtr<F>) -> bool {
+        ptr == self.nil_ptr
+    }
+
+    pub fn is_not_nil(self, ptr: ExprPtr<F>) -> bool {
+        ptr != self.nil_ptr
     }
 }
