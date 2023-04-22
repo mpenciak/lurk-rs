@@ -1,6 +1,6 @@
 use itertools::Itertools;
 use lurk::field::LurkField;
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 type Name = Vec<String>;
 
@@ -16,7 +16,7 @@ fn hash8<F: LurkField>(preimage: &[F; 8]) -> F {
     todo!()
 }
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Eq, PartialEq, Hash)]
 pub enum ExprTag {
     Num,
     U64,
@@ -37,7 +37,7 @@ impl ExprTag {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Eq, PartialEq, Hash)]
 pub enum Op1 {
     Car,
     Cdr,
@@ -53,7 +53,7 @@ pub enum Op1 {
     U64,
 }
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Eq, PartialEq, Hash)]
 pub enum Op2 {
     Sum,
     Diff,
@@ -73,7 +73,7 @@ pub enum Op2 {
     Eval,
 }
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Eq, PartialEq, Hash)]
 pub enum ContTag {
     Outermost,
     Call0,
@@ -99,13 +99,13 @@ impl ContTag {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Eq, PartialEq, Hash)]
 pub struct ExprPtr<F: LurkField> {
     tag: ExprTag,
     val: F,
 }
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Eq, PartialEq, Hash)]
 pub struct ContPtr<F: LurkField> {
     tag: ContTag,
     val: F,
@@ -126,21 +126,21 @@ pub enum ContPtrImg<F: LurkField> {
 }
 
 pub struct Store<F: LurkField> {
-    exprs: BTreeMap<ExprPtr<F>, ExprPtrImg<F>>,
-    conts: BTreeMap<ContPtr<F>, ContPtrImg<F>>,
-    comms: BTreeMap<F, ExprPtr<F>>,
+    exprs: HashMap<ExprPtr<F>, ExprPtrImg<F>>,
+    conts: HashMap<ContPtr<F>, ContPtrImg<F>>,
+    comms: HashMap<F, ExprPtr<F>>,
 
-    vec_char_cache: BTreeMap<Vec<char>, ExprPtr<F>>,
-    vec_str_cache: BTreeMap<Vec<String>, ExprPtr<F>>,
+    vec_char_cache: HashMap<Vec<char>, ExprPtr<F>>,
+    vec_str_cache: HashMap<Vec<String>, ExprPtr<F>>,
 
-    str_cache: BTreeMap<String, ExprPtr<F>>,
-    str_cache_inv: BTreeMap<ExprPtr<F>, String>,
+    str_cache: HashMap<String, ExprPtr<F>>,
+    str_cache_inv: HashMap<ExprPtr<F>, String>,
 
-    name_cache: BTreeMap<Name, ExprPtr<F>>,
-    name_cache_inv: BTreeMap<ExprPtr<F>, Name>,
+    name_cache: HashMap<Name, ExprPtr<F>>,
+    name_cache_inv: HashMap<ExprPtr<F>, Name>,
 }
 
-impl<F: LurkField + std::cmp::Ord> Store<F> {
+impl<F: LurkField + core::hash::Hash> Store<F> {
     pub fn put_chars(&mut self, chars: Vec<char>) -> ExprPtr<F> {
         let mut ptr: ExprPtr<F>;
         let mut chars_rev = chars;
