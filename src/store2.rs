@@ -141,14 +141,6 @@ pub struct Store<F: LurkField> {
 }
 
 impl<F: LurkField + std::cmp::Ord> Store<F> {
-    pub fn put_expr(&mut self, ptr: ExprPtr<F>, img: ExprPtrImg<F>) {
-        self.exprs.insert(ptr, img);
-    }
-
-    pub fn put_cont(&mut self, ptr: ContPtr<F>, img: ContPtrImg<F>) {
-        self.conts.insert(ptr, img);
-    }
-
     pub fn put_chars(&mut self, chars: Vec<char>) -> ExprPtr<F> {
         let mut ptr: ExprPtr<F>;
         let mut chars_rev = chars;
@@ -190,7 +182,7 @@ impl<F: LurkField + std::cmp::Ord> Store<F> {
                 },
                 ptr.clone(),
             );
-            self.put_expr(ptr.clone(), img);
+            self.exprs.insert(ptr.clone(), img);
             chars_rev.push(c);
             self.vec_char_cache.insert(chars_rev.clone(), ptr.clone());
         }
@@ -234,7 +226,7 @@ impl<F: LurkField + std::cmp::Ord> Store<F> {
                 val: hash,
             };
             let img = ExprPtrImg::NameCons(name_ptr, ptr.clone());
-            self.put_expr(ptr.clone(), img);
+            self.exprs.insert(ptr.clone(), img);
             strs_rev.push(s);
             self.vec_str_cache.insert(strs_rev.clone(), ptr.clone());
         }
@@ -288,7 +280,7 @@ impl<F: LurkField + std::cmp::Ord> Store<F> {
             tag: ExprTag::Cons,
             val: hash,
         };
-        self.put_expr(ptr.clone(), img);
+        self.exprs.insert(ptr.clone(), img);
         ptr
     }
 
@@ -308,7 +300,7 @@ impl<F: LurkField + std::cmp::Ord> Store<F> {
             tag: ExprTag::Fun,
             val: hash,
         };
-        self.put_expr(ptr.clone(), img);
+        self.exprs.insert(ptr.clone(), img);
         ptr
     }
 
@@ -321,7 +313,7 @@ impl<F: LurkField + std::cmp::Ord> Store<F> {
             tag: ExprTag::Thunk,
             val: hash,
         };
-        self.put_expr(ptr.clone(), img);
+        self.exprs.insert(ptr.clone(), img);
         ptr
     }
 
@@ -330,7 +322,8 @@ impl<F: LurkField + std::cmp::Ord> Store<F> {
         let preimage = [expr.tag.to_field(), expr.val, cont.tag.to_field(), cont.val];
         let hash = hash4(&preimage);
         let ptr = ContPtr { tag, val: hash };
-        self.put_cont(ptr.clone(), ContPtrImg::Cont1(expr_, cont_));
+        self.conts
+            .insert(ptr.clone(), ContPtrImg::Cont1(expr_, cont_));
         ptr
     }
 
@@ -352,7 +345,8 @@ impl<F: LurkField + std::cmp::Ord> Store<F> {
         ];
         let hash = hash6(&preimage);
         let ptr = ContPtr { tag, val: hash };
-        self.put_cont(ptr.clone(), ContPtrImg::Cont2(e1_, e2_, cont_));
+        self.conts
+            .insert(ptr.clone(), ContPtrImg::Cont2(e1_, e2_, cont_));
         ptr
     }
 
@@ -377,7 +371,8 @@ impl<F: LurkField + std::cmp::Ord> Store<F> {
         ];
         let hash = hash8(&preimage);
         let ptr = ContPtr { tag, val: hash };
-        self.put_cont(ptr.clone(), ContPtrImg::Cont3(e1_, e2_, e3_, cont_));
+        self.conts
+            .insert(ptr.clone(), ContPtrImg::Cont3(e1_, e2_, e3_, cont_));
         ptr
     }
 }
