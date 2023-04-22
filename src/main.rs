@@ -1,3 +1,5 @@
+mod store2;
+
 use anyhow::Result;
 
 use lurk::eval::lang::{Coproc, Lang};
