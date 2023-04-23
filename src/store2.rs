@@ -1,4 +1,3 @@
-use anyhow::anyhow;
 use itertools::Itertools;
 use lurk::field::LurkField;
 use std::collections::HashMap;
@@ -283,11 +282,19 @@ impl<F: LurkField + core::hash::Hash> Store<F> {
         }
     }
 
-    pub fn get_str(&mut self, str_ptr: ExprPtr<F>) -> anyhow::Result<String, &str> {
+    pub fn get_str(&mut self, str_ptr: &ExprPtr<F>) -> Result<String, &str> {
         let mut acc_str: String = Default::default();
         let mut ptr = str_ptr;
         loop {
-            match self.str_cache_inv.get(&ptr) {
+            if *ptr
+                == (ExprPtr {
+                    tag: ExprTag::Str,
+                    val: F::zero(),
+                })
+            {
+                break;
+            }
+            match self.str_cache_inv.get(ptr) {
                 Some(str) => {
                     acc_str.push_str(str.as_str());
                     break;
@@ -297,7 +304,7 @@ impl<F: LurkField + core::hash::Hash> Store<F> {
                         acc_str.push(char_ptr.val.to_char().unwrap());
                         self.str_cache.insert(acc_str.clone(), ptr.clone());
                         self.str_cache_inv.insert(ptr.clone(), acc_str.clone());
-                        ptr = tail_ptr.clone();
+                        ptr = tail_ptr;
                     }
                     _ => return Err("Error when fetching string"),
                 },
@@ -318,13 +325,21 @@ impl<F: LurkField + core::hash::Hash> Store<F> {
         }
     }
 
-    pub fn get_name(&mut self, name_ptr: ExprPtr<F>) -> anyhow::Result<Name, &str> {
+    pub fn get_name(&mut self, name_ptr: &ExprPtr<F>) -> Result<Name, &str> {
         let mut acc_name: Name = Default::default();
         let mut ptr = name_ptr;
         loop {
+            if *ptr
+                == (ExprPtr {
+                    tag: ExprTag::Name,
+                    val: F::zero(),
+                })
+            {
+                break;
+            }
             match self.name_cache_inv.get(&ptr) {
                 Some(name) => {
-                    // acc_name.extend(name);
+                    // acc_name.append(name);
                     break;
                 }
                 None => match self.exprs.get(&ptr) {
@@ -333,15 +348,16 @@ impl<F: LurkField + core::hash::Hash> Store<F> {
                         // acc_name.push(str);
                         self.name_cache.insert(acc_name.clone(), ptr.clone());
                         self.name_cache_inv.insert(ptr.clone(), acc_name.clone());
-                        ptr = tail_ptr.clone();
+                        ptr = tail_ptr;
                     }
-                    _ => return Err("Error when fetching string"),
+                    _ => return Err("Error when fetching name"),
                 },
             }
         }
         Ok(acc_name)
     }
 
+    #[inline]
     pub fn put_sym(&mut self, sym_name: Name) -> ExprPtr<F> {
         ExprPtr {
             tag: ExprTag::Sym,
@@ -349,11 +365,22 @@ impl<F: LurkField + core::hash::Hash> Store<F> {
         }
     }
 
+    #[inline]
     pub fn put_key(&mut self, key_name: Name) -> ExprPtr<F> {
         ExprPtr {
             tag: ExprTag::Key,
             val: self.put_name(key_name).val,
         }
+    }
+
+    #[inline]
+    pub fn get_sym_key_name(&mut self, ptr: &ExprPtr<F>) -> Result<Name, &str> {
+        self.get_name(
+            &(ExprPtr {
+                tag: ExprTag::Name,
+                val: ptr.val,
+            }),
+        )
     }
 
     pub fn put_cons(&mut self, head: ExprPtr<F>, tail: ExprPtr<F>) -> ExprPtr<F> {
@@ -367,6 +394,14 @@ impl<F: LurkField + core::hash::Hash> Store<F> {
         };
         self.exprs.insert(ptr.clone(), img);
         ptr
+    }
+
+    #[inline]
+    pub fn get_cons(&self, cons_ptr: &ExprPtr<F>) -> Result<(&ExprPtr<F>, &ExprPtr<F>), &str> {
+        match self.exprs.get(cons_ptr) {
+            Some(ExprPtrImg::Cons(x, y)) => Ok((x, y)),
+            _ => Err("Error fetching cons"),
+        }
     }
 
     pub fn put_fun(&mut self, args: ExprPtr<F>, env: ExprPtr<F>, body: ExprPtr<F>) -> ExprPtr<F> {
@@ -389,6 +424,17 @@ impl<F: LurkField + core::hash::Hash> Store<F> {
         ptr
     }
 
+    #[inline]
+    pub fn get_fun(
+        &self,
+        fun_ptr: &ExprPtr<F>,
+    ) -> Result<(&ExprPtr<F>, &ExprPtr<F>, &ExprPtr<F>), &str> {
+        match self.exprs.get(fun_ptr) {
+            Some(ExprPtrImg::Fun(x, y, z)) => Ok((x, y, z)),
+            _ => Err("Error fetching function"),
+        }
+    }
+
     pub fn put_thunk(&mut self, expr: ExprPtr<F>, cont: ContPtr<F>) -> ExprPtr<F> {
         let (expr_, cont_) = (expr.clone(), cont.clone());
         let preimage = [expr.tag.to_field(), expr.val, cont.tag.to_field(), cont.val];
@@ -402,6 +448,14 @@ impl<F: LurkField + core::hash::Hash> Store<F> {
         ptr
     }
 
+    #[inline]
+    pub fn get_thunk(&self, thunk_ptr: &ExprPtr<F>) -> Result<(&ExprPtr<F>, &ContPtr<F>), &str> {
+        match self.exprs.get(thunk_ptr) {
+            Some(ExprPtrImg::Thunk(x, y)) => Ok((x, y)),
+            _ => Err("Error fetching thunk"),
+        }
+    }
+
     pub fn put_cont1(&mut self, tag: ContTag, expr: ExprPtr<F>, cont: ContPtr<F>) -> ContPtr<F> {
         let (expr_, cont_) = (expr.clone(), cont.clone());
         let preimage = [expr.tag.to_field(), expr.val, cont.tag.to_field(), cont.val];
@@ -410,6 +464,14 @@ impl<F: LurkField + core::hash::Hash> Store<F> {
         self.conts
             .insert(ptr.clone(), ContPtrImg::Cont1(expr_, cont_));
         ptr
+    }
+
+    #[inline]
+    pub fn get_cont1(&self, cont_ptr: &ContPtr<F>) -> Result<(&ExprPtr<F>, &ContPtr<F>), &str> {
+        match self.conts.get(cont_ptr) {
+            Some(ContPtrImg::Cont1(x, k)) => Ok((x, k)),
+            _ => Err("Error fetching cont1"),
+        }
     }
 
     pub fn put_cont2(
@@ -433,6 +495,17 @@ impl<F: LurkField + core::hash::Hash> Store<F> {
         self.conts
             .insert(ptr.clone(), ContPtrImg::Cont2(e1_, e2_, cont_));
         ptr
+    }
+
+    #[inline]
+    pub fn get_cont2(
+        &self,
+        cont_ptr: &ContPtr<F>,
+    ) -> Result<(&ExprPtr<F>, &ExprPtr<F>, &ContPtr<F>), &str> {
+        match self.conts.get(cont_ptr) {
+            Some(ContPtrImg::Cont2(x, y, k)) => Ok((x, y, k)),
+            _ => Err("Error fetching cont2"),
+        }
     }
 
     pub fn put_cont3(
@@ -459,6 +532,17 @@ impl<F: LurkField + core::hash::Hash> Store<F> {
         self.conts
             .insert(ptr.clone(), ContPtrImg::Cont3(e1_, e2_, e3_, cont_));
         ptr
+    }
+
+    #[inline]
+    pub fn get_cont3(
+        &self,
+        cont_ptr: &ContPtr<F>,
+    ) -> Result<(&ExprPtr<F>, &ExprPtr<F>, &ExprPtr<F>, &ContPtr<F>), &str> {
+        match self.conts.get(cont_ptr) {
+            Some(ContPtrImg::Cont3(x, y, z, k)) => Ok((x, y, z, k)),
+            _ => Err("Error fetching cont3"),
+        }
     }
 
     #[inline]
