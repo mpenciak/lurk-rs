@@ -1,6 +1,6 @@
 use itertools::Itertools;
 use lurk::field::LurkField;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 type Name = Vec<String>;
 
@@ -16,7 +16,7 @@ fn hash8<F: LurkField>(preimage: &[F; 8]) -> F {
     todo!()
 }
 
-#[derive(Clone, Eq, PartialEq, Hash)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ExprTag {
     Num,
     U64,
@@ -37,7 +37,7 @@ impl ExprTag {
     }
 }
 
-#[derive(Clone, Eq, PartialEq, Hash)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Op1 {
     Car,
     Cdr,
@@ -53,7 +53,7 @@ pub enum Op1 {
     U64,
 }
 
-#[derive(Clone, Eq, PartialEq, Hash)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Op2 {
     Sum,
     Diff,
@@ -73,7 +73,7 @@ pub enum Op2 {
     Eval,
 }
 
-#[derive(Clone, Eq, PartialEq, Hash)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ContTag {
     Outermost,
     Call0,
@@ -99,13 +99,13 @@ impl ContTag {
     }
 }
 
-#[derive(Clone, Eq, PartialEq, Hash)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ExprPtr<F: LurkField> {
     tag: ExprTag,
     val: F,
 }
 
-#[derive(Clone, Eq, PartialEq, Hash)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ContPtr<F: LurkField> {
     tag: ContTag,
     val: F,
@@ -115,6 +115,8 @@ pub enum ExprPtrImg<F: LurkField> {
     Cons(ExprPtr<F>, ExprPtr<F>),
     StrCons(ExprPtr<F>, ExprPtr<F>),
     NameCons(ExprPtr<F>, ExprPtr<F>),
+    Sym(ExprPtr<F>),
+    Key(ExprPtr<F>),
     Fun(ExprPtr<F>, ExprPtr<F>, ExprPtr<F>),
     Thunk(ExprPtr<F>, ContPtr<F>),
 }
@@ -126,58 +128,21 @@ pub enum ContPtrImg<F: LurkField> {
 }
 
 pub struct Store<F: LurkField> {
-    exprs: HashMap<ExprPtr<F>, ExprPtrImg<F>>,
-    conts: HashMap<ContPtr<F>, ContPtrImg<F>>,
-    comms: HashMap<F, ExprPtr<F>>,
+    exprs: BTreeMap<ExprPtr<F>, ExprPtrImg<F>>,
+    conts: BTreeMap<ContPtr<F>, ContPtrImg<F>>,
+    comms: BTreeMap<F, ExprPtr<F>>,
 
-    vec_char_cache: HashMap<Vec<char>, ExprPtr<F>>,
-    vec_str_cache: HashMap<Vec<String>, ExprPtr<F>>,
+    vec_char_cache: BTreeMap<Vec<char>, ExprPtr<F>>,
+    vec_str_cache: BTreeMap<Vec<String>, ExprPtr<F>>,
 
-    str_cache: HashMap<String, ExprPtr<F>>,
-    str_cache_inv: HashMap<ExprPtr<F>, String>,
+    str_cache: BTreeMap<String, ExprPtr<F>>,
+    str_cache_inv: BTreeMap<ExprPtr<F>, String>,
 
-    name_cache: HashMap<Name, ExprPtr<F>>,
-    name_cache_inv: HashMap<ExprPtr<F>, Name>,
-
-    nil_ptr: ExprPtr<F>,
-    t_ptr: ExprPtr<F>,
-    lambda_ptr: ExprPtr<F>,
-    quote_ptr: ExprPtr<F>,
-    let_ptr: ExprPtr<F>,
-    letrec_ptr: ExprPtr<F>,
-    cons_ptr: ExprPtr<F>,
-    strcons_ptr: ExprPtr<F>,
-    begin_ptr: ExprPtr<F>,
-    car_ptr: ExprPtr<F>,
-    cdr_ptr: ExprPtr<F>,
-    atom_ptr: ExprPtr<F>,
-    emit_ptr: ExprPtr<F>,
-    sum_ptr: ExprPtr<F>,
-    diff_ptr: ExprPtr<F>,
-    product_ptr: ExprPtr<F>,
-    quotient_ptr: ExprPtr<F>,
-    modulo_ptr: ExprPtr<F>,
-    num_equal_ptr: ExprPtr<F>,
-    equal_ptr: ExprPtr<F>,
-    less_ptr: ExprPtr<F>,
-    less_equal_ptr: ExprPtr<F>,
-    greater_ptr: ExprPtr<F>,
-    greater_equal_ptr: ExprPtr<F>,
-    current_env_ptr: ExprPtr<F>,
-    if_ptr: ExprPtr<F>,
-    hide_ptr: ExprPtr<F>,
-    commit_ptr: ExprPtr<F>,
-    num_ptr: ExprPtr<F>,
-    u64_ptr: ExprPtr<F>,
-    comm_ptr: ExprPtr<F>,
-    char_ptr: ExprPtr<F>,
-    eval_ptr: ExprPtr<F>,
-    open_ptr: ExprPtr<F>,
-    secret_ptr: ExprPtr<F>,
-    dummy_ptr: ExprPtr<F>,
+    name_cache: BTreeMap<Name, ExprPtr<F>>,
+    name_cache_inv: BTreeMap<ExprPtr<F>, Name>,
 }
 
-impl<F: LurkField + core::hash::Hash> Store<F> {
+impl<F: LurkField + std::cmp::Ord> Store<F> {
     pub fn put_chars(&mut self, chars: Vec<char>) -> ExprPtr<F> {
         let mut ptr: ExprPtr<F>;
         let mut chars_rev = chars;
@@ -359,18 +324,20 @@ impl<F: LurkField + core::hash::Hash> Store<F> {
 
     #[inline]
     pub fn put_sym(&mut self, sym_name: Name) -> ExprPtr<F> {
-        ExprPtr {
-            tag: ExprTag::Sym,
-            val: self.put_name(sym_name).val,
-        }
+        let name_ptr = self.put_name(sym_name);
+        let ptr = ExprPtr { tag: ExprTag::Sym, val: name_ptr.val };
+        let img = ExprPtrImg::Sym(name_ptr);
+        self.exprs.insert(ptr.clone(), img);
+        ptr
     }
 
     #[inline]
     pub fn put_key(&mut self, key_name: Name) -> ExprPtr<F> {
-        ExprPtr {
-            tag: ExprTag::Key,
-            val: self.put_name(key_name).val,
-        }
+        let name_ptr = self.put_name(key_name);
+        let ptr = ExprPtr { tag: ExprTag::Key, val: name_ptr.val };
+        let img = ExprPtrImg::Key(name_ptr);
+        self.exprs.insert(ptr.clone(), img);
+        ptr
     }
 
     #[inline]
@@ -548,52 +515,5 @@ impl<F: LurkField + core::hash::Hash> Store<F> {
     #[inline]
     pub fn put_lurk_sym(&mut self, lurk_sym: &str) -> ExprPtr<F> {
         self.put_sym(vec![lurk_sym.to_string(), "lurk".to_string()])
-    }
-
-    pub fn put_reserved_syms(&mut self) {
-        self.nil_ptr = self.put_lurk_sym("nil");
-        self.t_ptr = self.put_lurk_sym("t");
-        self.lambda_ptr = self.put_lurk_sym("lambda");
-        self.quote_ptr = self.put_lurk_sym("quote");
-        self.let_ptr = self.put_lurk_sym("let");
-        self.letrec_ptr = self.put_lurk_sym("letrec");
-        self.cons_ptr = self.put_lurk_sym("cons");
-        self.strcons_ptr = self.put_lurk_sym("strcons");
-        self.begin_ptr = self.put_lurk_sym("begin");
-        self.car_ptr = self.put_lurk_sym("car");
-        self.cdr_ptr = self.put_lurk_sym("cdr");
-        self.atom_ptr = self.put_lurk_sym("atom");
-        self.emit_ptr = self.put_lurk_sym("emit");
-        self.sum_ptr = self.put_lurk_sym("+");
-        self.diff_ptr = self.put_lurk_sym("-");
-        self.product_ptr = self.put_lurk_sym("*");
-        self.quotient_ptr = self.put_lurk_sym("/");
-        self.modulo_ptr = self.put_lurk_sym("%");
-        self.num_equal_ptr = self.put_lurk_sym("=");
-        self.equal_ptr = self.put_lurk_sym("eq");
-        self.less_ptr = self.put_lurk_sym("<");
-        self.less_equal_ptr = self.put_lurk_sym("<=");
-        self.greater_ptr = self.put_lurk_sym(">");
-        self.greater_equal_ptr = self.put_lurk_sym(">=");
-        self.current_env_ptr = self.put_lurk_sym("current-env");
-        self.if_ptr = self.put_lurk_sym("if");
-        self.hide_ptr = self.put_lurk_sym("hide");
-        self.commit_ptr = self.put_lurk_sym("commit");
-        self.num_ptr = self.put_lurk_sym("num");
-        self.u64_ptr = self.put_lurk_sym("u64");
-        self.comm_ptr = self.put_lurk_sym("comm");
-        self.char_ptr = self.put_lurk_sym("char");
-        self.eval_ptr = self.put_lurk_sym("eval");
-        self.open_ptr = self.put_lurk_sym("open");
-        self.secret_ptr = self.put_lurk_sym("secret");
-        self.dummy_ptr = self.put_lurk_sym("dummy");
-    }
-
-    pub fn is_nil(self, ptr: ExprPtr<F>) -> bool {
-        ptr == self.nil_ptr
-    }
-
-    pub fn is_not_nil(self, ptr: ExprPtr<F>) -> bool {
-        ptr != self.nil_ptr
     }
 }
