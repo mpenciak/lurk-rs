@@ -6,6 +6,7 @@ use bellperson::{
     util_cs::Comparable,
     Circuit, ConstraintSystem, SynthesisError,
 };
+use rayon::prelude::{ParallelIterator, ParallelSlice};
 
 use crate::{
     circuit::gadgets::{
@@ -59,7 +60,9 @@ pub struct MultiFrame<'a, F: LurkField, T: Copy, W, C: Coprocessor<F>> {
     pub count: usize,
 }
 
-impl<'a, F: LurkField, T: Clone + Copy, W: Copy, C: Coprocessor<F>> CircuitFrame<'a, F, T, W, C> {
+impl<'a, F: LurkField, T: Clone + Copy, W: Copy + Sync, C: Coprocessor<F>>
+    CircuitFrame<'a, F, T, W, C>
+{
     pub fn blank() -> Self {
         Self {
             store: None,
@@ -81,8 +84,13 @@ impl<'a, F: LurkField, T: Clone + Copy, W: Copy, C: Coprocessor<F>> CircuitFrame
     }
 }
 
-impl<'a, F: LurkField, T: Clone + Copy + std::cmp::PartialEq, W: Copy, C: Coprocessor<F>>
-    MultiFrame<'a, F, T, W, C>
+impl<
+        'a,
+        F: LurkField,
+        T: Clone + Copy + std::cmp::PartialEq + Sync,
+        W: Copy + Sync,
+        C: Coprocessor<F>,
+    > MultiFrame<'a, F, T, W, C>
 {
     pub fn blank(count: usize, lang: &'a Lang<F, C>) -> Self {
         Self {
@@ -183,9 +191,30 @@ impl<'a, F: LurkField, T: Clone + Copy + std::cmp::PartialEq, W: Copy, C: Coproc
         frames: &[CircuitFrame<'_, F, IO<F>, Witness<F>, C>],
         g: &GlobalAllocations<F>,
     ) -> (AllocatedPtr<F>, AllocatedPtr<F>, AllocatedContPtr<F>) {
+        let use_extension = CS::is_extensible();
+
+        if use_extension {
+            self.synthesize_frames_extendable(
+                cs, store, input_expr, input_env, input_cont, frames, g,
+            )
+        } else {
+            self.synthesize_frames_default(cs, store, input_expr, input_env, input_cont, frames, g)
+        }
+    }
+
+    pub fn synthesize_frames_default<CS: ConstraintSystem<F>>(
+        &self,
+        cs: &mut CS,
+        store: &Store<F>,
+        input_expr: AllocatedPtr<F>,
+        input_env: AllocatedPtr<F>,
+        input_cont: AllocatedContPtr<F>,
+        frames: &[CircuitFrame<'_, F, IO<F>, Witness<F>, C>],
+        g: &GlobalAllocations<F>,
+    ) -> (AllocatedPtr<F>, AllocatedPtr<F>, AllocatedContPtr<F>) {
         let acc = (input_expr, input_env, input_cont);
 
-        let (_, (new_expr, new_env, new_cont)) =
+        let (i, (new_expr, new_env, new_cont)) =
             frames.iter().fold((0, acc), |(i, allocated_io), frame| {
                 if let Some(next_input) = frame.input {
                     // Ensure all intermediate allocated I/O values match the provided executation trace.
@@ -230,6 +259,78 @@ impl<'a, F: LurkField, T: Clone + Copy + std::cmp::PartialEq, W: Copy, C: Coproc
 
         (new_expr, new_env, new_cont)
     }
+
+    pub fn synthesize_frames_extendable<CS: ConstraintSystem<F>>(
+        &self,
+        cs: &mut CS,
+        store: &Store<F>,
+        _input_expr: AllocatedPtr<F>,
+        _input_env: AllocatedPtr<F>,
+        _input_cont: AllocatedContPtr<F>,
+        frames: &[CircuitFrame<'_, F, IO<F>, Witness<F>, C>],
+        g: &GlobalAllocations<F>,
+    ) -> (AllocatedPtr<F>, AllocatedPtr<F>, AllocatedContPtr<F>) {
+        let num_cpus = num_cpus::get() as u32;
+        let num_frames = frames.len() as u32;
+
+        // TODO: This maybe should round up.
+        let chunk_size = (num_frames / num_cpus).max(1) as usize;
+
+        let css = frames
+            .par_chunks(chunk_size)
+            .map(|frame_group| {
+                let input = frame_group[0].input;
+
+                let (input_expr, input_env, input_cont) = {
+                    // Here be dragons.
+                    let mut bogus_cs = CS::new();
+
+                    let bogus_input_expr = AllocatedPtr::alloc(
+                        &mut bogus_cs.namespace(|| format!("bogus input expr")),
+                        // FIXME: unwraps
+                        || Ok(store.get_expr_hash(&input.unwrap().expr).unwrap()),
+                    )
+                    .unwrap();
+                    let bogus_input_env = AllocatedPtr::alloc(
+                        &mut bogus_cs.namespace(|| format!("bogus input env")),
+                        // FIXME: unwraps
+                        || Ok(store.get_expr_hash(&input.unwrap().env).unwrap()),
+                    )
+                    .unwrap();
+                    let bogus_input_cont = AllocatedContPtr::alloc(
+                        &mut bogus_cs.namespace(|| format!("bogus input cont")),
+                        // FIXME: unwraps
+                        || Ok(store.hash_cont(&input.unwrap().cont).unwrap()),
+                    )
+                    .unwrap();
+                    (bogus_input_expr, bogus_input_env, bogus_input_cont)
+                };
+                let mut cs = CS::new();
+                // FIXME -- should be returning Result<..., SynthesisError>.
+                cs.alloc_input(|| "temp ONE", || Ok(F::one())).unwrap();
+
+                // FIXME: shared g may be an issue.
+                let output = self.synthesize_frames_default(
+                    &mut cs,
+                    store,
+                    input_expr.clone(),
+                    input_env.clone(),
+                    input_cont.clone(),
+                    frame_group,
+                    g,
+                );
+                (cs, output)
+            })
+            .collect::<Vec<_>>();
+
+        let mut final_output = None;
+        for (frames_cs, output) in css.into_iter() {
+            final_output = Some(output);
+            cs.extend(frames_cs);
+        }
+
+        final_output.unwrap()
+    }
 }
 
 impl<F: LurkField, T: PartialEq + Debug, W, C: Coprocessor<F>> CircuitFrame<'_, F, T, W, C> {
@@ -244,7 +345,9 @@ impl<F: LurkField, T: PartialEq + Debug + Copy, W, C: Coprocessor<F>> MultiFrame
     }
 }
 
-impl<F: LurkField, W: Copy, C: Coprocessor<F>> Provable<F> for MultiFrame<'_, F, IO<F>, W, C> {
+impl<F: LurkField, W: Copy + Sync, C: Coprocessor<F>> Provable<F>
+    for MultiFrame<'_, F, IO<F>, W, C>
+{
     fn public_inputs(&self) -> Vec<F> {
         let mut inputs: Vec<_> = Vec::with_capacity(Self::public_input_size());
 

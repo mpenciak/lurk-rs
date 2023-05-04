@@ -49,7 +49,7 @@ impl<F: LurkField> std::fmt::Display for IO<F> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Frame<T: Copy, W: Copy, C> {
+pub struct Frame<T: Copy, W: Copy + Sync, C> {
     pub input: T,
     pub output: T,
     pub i: usize,
@@ -117,7 +117,7 @@ impl<F: LurkField> From<ContPtr<F>> for Status {
     }
 }
 
-impl<F: LurkField, W: Copy, C: Coprocessor<F>> Frame<IO<F>, W, C> {
+impl<F: LurkField, W: Copy + Sync, C: Coprocessor<F>> Frame<IO<F>, W, C> {
     pub fn precedes(&self, maybe_next: &Self) -> bool {
         let sequential = self.i + 1 == maybe_next.i;
         let io_match = self.output == maybe_next.input;
@@ -294,7 +294,7 @@ impl<
 }
 
 #[derive(Debug)]
-pub struct FrameIt<'a, W: Copy, F: LurkField, C: Coprocessor<F>> {
+pub struct FrameIt<'a, W: Copy + Sync, F: LurkField, C: Coprocessor<F>> {
     first: bool,
     frame: Frame<IO<F>, W, C>,
     store: &'a mut Store<F>,
@@ -409,6 +409,8 @@ pub struct Witness<F: LurkField> {
     pub(crate) conses: ConsWitness<F>,
     pub(crate) conts: ContWitness<F>,
 }
+
+unsafe impl<F: LurkField> Sync for Witness<F> {}
 
 impl<'a, F: LurkField, C: Coprocessor<F>> Evaluator<'a, F, C>
 where
